@@ -16,8 +16,10 @@ from heatclient.openstack.common._i18n import _
 import yaml
 
 
-SECTIONS = (PARAMETER_DEFAULTS, PARAMETERS, RESOURCE_REGISTRY) = \
-           ('parameter_defaults', 'parameters', 'resource_registry')
+SECTIONS = (PARAMETER_DEFAULTS, PARAMETERS, RESOURCE_REGISTRY,
+            BREAKPOINTS) = \
+           ('parameter_defaults', 'parameters', 'resource_registry',
+            'breakpoints')
 
 
 def parse(env_str):
@@ -44,9 +46,14 @@ def parse(env_str):
     return env
 
 
+env_defaults = {
+    BREAKPOINTS: [],
+}
+
+
 def default_for_missing(env):
     '''Checks a parsed environment for missing sections.
     '''
     for param in SECTIONS:
         if param not in env:
-            env[param] = {}
+            env[param] = env_defaults.get(param, {})

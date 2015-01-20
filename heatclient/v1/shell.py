@@ -82,6 +82,9 @@ def do_create(hc, args):
            help=_('Path to the environment, it can be specified '
                   'multiple times.'),
            action='append')
+@utils.arg('-b', '--breakpoint', metavar='<RESOURCE>',
+           help='Name of a resource to set a breakpoint to.',
+           action='append')
 @utils.arg('-u', '--template-url', metavar='<URL>',
            help=_('URL of template.'))
 @utils.arg('-o', '--template-object', metavar='<URL>',
@@ -121,6 +124,10 @@ def do_stack_create(hc, args):
                            'arg2': '-t/--timeout'
                        })
 
+    breakpoints = normalize_breakpoints(args.name, env, args)
+    if breakpoints:
+        env['breakpoints'] = breakpoints
+
     fields = {
         'stack_name': args.name,
         'disable_rollback': not(args.enable_rollback),
@@ -136,6 +143,55 @@ def do_stack_create(hc, args):
 
     hc.stacks.create(**fields)
     do_stack_list(hc)
+
+
+def normalize_breakpoints(stack_name, env, args):
+    '''Return breakpoints from env and args in the form expected by the API.
+
+    Heat engine & API expects each breakpoint to be a list of strings. The
+    last item is the name of the resource with the breakpoint and the items
+    before it are the names all the stacks necessary to get to that resource
+    (including the top-level stack).
+
+    So a breakpoint on a resource in the top-level stack looks like this:
+
+    ['mystack', 'my_resource']
+
+    For a resource in a nested stack:
+
+    ['mystack', 'nested_one', 'nested_two', 'resource']
+
+    The users set the breakpoints in a simplified format to reduce typing and
+    duplication. They don't specify the top-level stack and if they want to
+    pause on a top-level resource, they can just enter its name, without
+    wrapping it in a list.
+    '''
+    result = []
+    if 'breakpoints' in env:
+        for resource in env['breakpoints']:
+            if not resource:
+                continue
+            if isinstance(resource, six.string_types):
+                # "my_resource" -> ["mystack", "my_resource"]
+                breakpoint = [stack_name, resource]
+            else:
+                # ["nested", "resource"] -> ["mystack", "nested", "resource"]
+                breakpoint = [stack_name] + resource
+            result.append(breakpoint)
+
+    # Turn the breakpoint specification in form of 'top_level_resource' or
+    # 'nested_stack/another_nested_stack/resource_name' to an absolute path:
+    # ['new_stack', 'top_level_resource'] or:
+    # ['new_stack', 'nested_stack', 'another_nested_stack', 'resource_name']
+    if getattr(args, 'breakpoint', False):
+        if 'breakpoints' not in env:
+            env['breakpoints'] = []
+        for breakpoint_declaration in args.breakpoint:
+            resource_path = [r for r in breakpoint_declaration.split('/') if r]
+            breakpoint = [stack_name] + resource_path
+            result.append(breakpoint)
+
+    return result
 
 
 @utils.arg('-e', '--environment-file', metavar='<FILE or URL>',
@@ -438,6 +494,9 @@ def do_update(hc, args):
            help=_('Path to the environment, it can be specified '
                   'multiple times.'),
            action='append')
+@utils.arg('-b', '--breakpoint', metavar='<RESOURCE>',
+           help='Name of a resource to set a breakpoint to.',
+           action='append')
 @utils.arg('-u', '--template-url', metavar='<URL>',
            help=_('URL of template.'))
 @utils.arg('-o', '--template-object', metavar='<URL>',
@@ -487,6 +546,10 @@ def do_stack_update(hc, args):
 
     env_files, env = template_utils.process_multiple_environments_and_files(
         env_paths=args.environment_file)
+
+    breakpoints = normalize_breakpoints(args.id, env, args)
+    if breakpoints:
+        env['breakpoints'] = breakpoints
 
     fields = {
         'stack_id': args.id,
@@ -882,6 +945,29 @@ def do_resource_signal(hc, args):
         raise exc.CommandError(_('Stack or resource not found: '
                                  '%(id)s %(resource)s') %
                                {'id': args.id, 'resource': args.resource})
+
+
+@utils.arg('id', metavar='<NAME or ID>',
+           help=_('Name or ID of the stack these resources belong to.'))
+@utils.arg('breakpoint', metavar='<BREAKPOINT>', nargs='+',
+           help='Breakpoint to clear.')
+def do_breakpoint_clear(hc, args):
+    '''Clear breakpoints on a given stack.'''
+    for breakpoint_string in args.breakpoint:
+        breakpoint = [b for b in breakpoint_string.split('/') if b]
+        resource_name = breakpoint[-1]
+        stack_id = args.id
+        for nested_stack_name in breakpoint[:-1]:
+            nested_stack = hc.resources.get(
+                stack_id=stack_id, resource_name=nested_stack_name)
+            stack_id = nested_stack.physical_resource_id
+        try:
+            hc.resources.signal(stack_id=stack_id,
+                                resource_name=resource_name,
+                                data={'breakpoint': False})
+        except exc.HTTPNotFound:
+            raise exc.CommandError('Stack or resource not found: %s %s' %
+                                   (stack_id, resource_name))
 
 
 @utils.arg('id', metavar='<NAME or ID>',

@@ -29,6 +29,7 @@ class YamlEnvironmentTest(testtools.TestCase):
 parameter_defaults: {}
 parameters: {}
 resource_registry: {}
+breakpoints: []
 '''
         tpl1 = environment_format.parse(yaml1)
         environment_format.default_for_missing(tpl1)
